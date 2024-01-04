@@ -17,6 +17,11 @@ VALUE_RENDER_OPTION__FORMULA = "FORMULA"
 
 _GSPREAD_CLIENT = None
 
+# Google Cloud credentials.
+GCLOUD_CREDENTIALS = "gs://jialan-cred"
+GCLOUD_USR_ACCOUNT = "majialan@broadinstitute.org"
+GCLOUD_PROJECT = "tgg-rare-disease"
+
 # Airtable IDs.
 RNA_SEQ_BASE_ID = "app034nYTJwpo9xxw"
 DATA_PATHS_TABLE_ID = "tblmT2O7VQasTKSDx"
@@ -63,6 +68,45 @@ for credential in credentials:
 SERVICE_ACCOUNT_CREDENTIALS_JSON_PATH = os.path.expanduser(
     str(config["service-account"]))
 AIRTABLE_TOKEN = str(config["airtable-token"])
+
+
+def switch_to_gmail_account(batch_job):
+    switch_gcloud_auth_to_user_account(batch_job,
+                                       gcloud_credentials_path=GCLOUD_CREDENTIALS,
+                                       gcloud_user_account=GCLOUD_USR_ACCOUNT,
+                                       gcloud_project=GCLOUD_PROJECT)
+
+
+def switch_gcloud_auth_to_user_account(batch_job,
+                                       gcloud_credentials_path,
+                                       gcloud_user_account,
+                                       gcloud_project):
+    if not gcloud_credentials_path:
+        raise ValueError("gcloud_credentials_path not specified.")
+
+    if not gcloud_user_account:
+        raise ValueError("gcloud_user_account not specified.")
+
+    if not gcloud_project:
+        raise ValueError("gcloud_project not specified.")
+
+    gcloud_auth_activate_service_account(batch_job)
+    batch_job.command(
+        f"gsutil -m cp -r {os.path.join(gcloud_credentials_path, '.config')} /tmp/")
+    batch_job.command(f"rm -rf ~/.config")
+    batch_job.command(f"mv /tmp/.config ~/")
+    batch_job.command(f"gcloud config set account {gcloud_user_account}")
+    batch_job.command(f"gcloud config set project {gcloud_project}")
+    batch_job.command(
+        f"export GOOGLE_APPLICATION_CREDENTIALS=$(find ~/.config/ -name 'adc.json')")
+
+
+def gcloud_auth_activate_service_account(batch_job):
+    """
+    Utility method to active gcloud auth using the Hail Batch-provided service account
+    """
+    batch_job.command(
+        f"gcloud auth activate-service-account --key-file /gsa-key/key.json")
 
 
 def get_gtex_metadata():

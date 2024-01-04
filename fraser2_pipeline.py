@@ -7,7 +7,7 @@ from fraser2_rscirpts import count_split_reads_single_sample_r, \
 from metadata_utils import read_from_airtable, \
     write_to_airtable, RNA_SEQ_BASE_ID, \
     DATA_PATHS_TABLE_ID, \
-    DATA_PATHS_VIEW_ID, get_gtex_metadata
+    DATA_PATHS_VIEW_ID, get_gtex_metadata, switch_to_gmail_account
 
 REGION = ["us-central1"]
 # DEFAULT_BATCH_NAME = "all"
@@ -36,9 +36,17 @@ def get_ids_and_bam_paths():
     return sample_ids, bam_paths
 
 
+# def create_symbolic_links(batch, job, path, link_path):
+#     localized_path = batch.read_input(path)
+#     job.command(f"ln -s {localized_path} {link_path}")
+
 def create_symbolic_links(batch, job, path, link_path):
-    localized_path = batch.read_input(path)
-    job.command(f"ln -s {localized_path} {link_path}")
+    if args.with_gtex:
+        job.command(
+            f"gsutil -u {args.requester_pays_project} -m cp {path} {link_path}")
+    else:
+        localized_path = batch.read_input(path)
+        job.command(f"ln -s {localized_path} {link_path}")
 
 
 def load_bam_and_index_file(batch, cur_job, sample_id, bam_path):
@@ -52,6 +60,10 @@ def load_bam_and_index_file(batch, cur_job, sample_id, bam_path):
 def count_and_cache_split_reads(batch, sample_id, bam_path):
     # count and cache split reads for one sample
     cur_count_job = batch.new_job(f"count_{sample_id}")
+    # switch email account for GTEx samples
+    if args.with_gtex and "GTEX" in sample_id:
+        switch_to_gmail_account(cur_count_job)
+
     bam_size = hfs.ls(bam_path)[0].size
     # print(bam_size)
     cur_count_job.storage(bam_size + 1e11)  # set the job storage to be the file size
@@ -125,6 +137,9 @@ def get_all_reads(batch, cur_job, sample_ids, bam_paths):
     if hfs.is_file(saved_fds_path):  # if the fds exists
         return None
 
+    if args.with_gtex:
+        switch_to_gmail_account(cur_job)
+
     # cur_job = batch.new_job(f"get_all_reads_{type}")
     cur_job.storage(f"{15 * to_use_ids.shape[0] + 100}G")
     load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths)
@@ -170,6 +185,9 @@ def get_env_vars(sample_ids):
 
 
 def run_fraser(batch, cur_job, sample_ids, bam_paths, cur_type):
+    if args.with_gtex:
+        switch_to_gmail_account(cur_job)
+
     # localize saved fds to the container
     saved_fds_path = f"{fraser_dir}/{args.job_name}_savedObjects"
     create_symbolic_links(batch, cur_job, saved_fds_path, "savedObjects")
@@ -259,7 +277,6 @@ if __name__ == "__main__":
         gtex_bam_paths = np.array(gtex_for_tissue["bam_path"])
         to_use_ids = np.concatenate([to_use_ids, gtex_ids], axis=0)
         to_use_bam_paths = np.concatenate([to_use_bam_paths, gtex_bam_paths], axis=0)
-
 
     psi_types = ["jaccard"]
     print("The number of samples used in this batch run is: ", len(to_use_ids))
