@@ -228,6 +228,7 @@ if __name__ == "__main__":
                         required=True)
     parser.add_argument("--job-name", type=str,
                         required=True)
+    parser.add_argument()
     parser.add_argument("-s", "--sample-ids", type=str,
                         help="A text file containing IDs of samples with the "
                              "specified tissue type to be processed. "
