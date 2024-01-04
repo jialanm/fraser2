@@ -7,6 +7,7 @@ import pandas as pd
 import subprocess
 import yaml
 from pyairtable import Api
+import numpy as np
 
 from google.oauth2.service_account import Credentials
 
@@ -27,6 +28,24 @@ METADATA_VIEW_ID = "viwTjCsk3SccsOJIz"
 DOWNSTREAM_ANALYSIS_TABLE_ID = "tblyJvv0ozZjXIutA"
 DOWNSTREAM_ANALYSIS_VIEW_ID = "viwkCT48ws9yDTDmf"
 
+GTEX_SAMPLE_NUM = 100
+ISCHEMIC_TIME_LIMIT = 720
+GTEX_METADATA_PATH = os.path.expanduser(
+    './data/GTEx_Analysis_v8_Annotations_SampleAttributesDS.tsv')
+GTEX_PHENOTYPE_PATH = os.path.expanduser(
+    './data/GTEx_Analysis_v8_Annotations_SubjectPhenotypesDS.tsv')
+
+GTEX_DETAIL_TO_TISSUE_DICT = {"Whole Blood": "whole_blood",
+                              "Cells - Cultured fibroblasts": "fibroblasts",
+                              "Muscle - Skeletal": "muscle",
+                              "Cells - EBV-transformed lymphocytes": "lymphocytes"
+                              }
+GTEX_TISSUE_TO_DETAIL_DICT = {"whole_blood": "Whole Blood",
+                              "fibroblasts": "Cells - Cultured fibroblasts",
+                              "muscle": "Muscle - Skeletal",
+                              "lymphocytes": "Cells - EBV-transformed lymphocytes"
+                              }
+
 # Parse YAML config file
 config_file_path = os.path.expanduser("~/.tgg_rnaseq_pipelines")
 if not os.path.isfile(config_file_path):
@@ -44,6 +63,89 @@ for credential in credentials:
 SERVICE_ACCOUNT_CREDENTIALS_JSON_PATH = os.path.expanduser(
     str(config["service-account"]))
 AIRTABLE_TOKEN = str(config["airtable-token"])
+
+
+def get_gtex_metadata():
+    if not os.path.isfile(GTEX_METADATA_PATH):
+        google_metadata_path = "gs://tgg-rnaseq/gtex_v8/GTEx_Analysis_v8_Annotations_SampleAttributesDS.tsv"
+        print(f"Downloading {google_metadata_path} to {GTEX_METADATA_PATH}")
+        os.system(f"gsutil -m cp {google_metadata_path} {GTEX_METADATA_PATH}")
+
+    if not os.path.isfile(GTEX_PHENOTYPE_PATH):
+        google_phenotype_path = "gs://tgg-rnaseq/gtex_v8/GTEx_Analysis_v8_Annotations_SubjectPhenotypesDS.tsv"
+        print(f"Downloading {google_phenotype_path} to {GTEX_PHENOTYPE_PATH}")
+        os.system(f"gsutil -m cp {google_phenotype_path} {GTEX_PHENOTYPE_PATH}")
+
+    gtex_metadata = pd.read_csv(GTEX_METADATA_PATH, sep="\t")
+    gtex_metadata = gtex_metadata.replace('', np.nan)
+    gtex_metadata = gtex_metadata[["SAMPID", "SMATSSCR", "SMTS", "SMTSD", "SMRIN",
+                                   "SMTSISCH", "SMAFRZE", "SMRDLGTH", "SMGEBTCHD"]]
+
+    gtex_metadata = gtex_metadata[gtex_metadata["SMTSD"].isin(
+        GTEX_DETAIL_TO_TISSUE_DICT.keys())]
+
+    # Samples best suited for rna-seq.
+    gtex_metadata = gtex_metadata[gtex_metadata["SMAFRZE"] == "RNASEQ"]
+    # Ischemic time < 12 hours
+    gtex_metadata = gtex_metadata.dropna(subset="SMTSISCH")
+    gtex_metadata = gtex_metadata[
+        gtex_metadata["SMTSISCH"].astype(int) < ISCHEMIC_TIME_LIMIT]
+    # Rank by RIN and ischemic time.
+    gtex_metadata = gtex_metadata.sort_values(["SMRIN", "SMTSISCH"], ascending=[
+        False, True]).groupby(
+        "SMTSD").head(GTEX_SAMPLE_NUM)
+    # Get bam file paths.
+    gtex_metadata["bam_path"] = gtex_metadata["SAMPID"].apply(get_gtex_bam_filename)
+    gtex_metadata["tissue"] = gtex_metadata["SMTSD"].map(GTEX_DETAIL_TO_TISSUE_DICT)
+
+    gtex_metadata = gtex_metadata.drop(["SMATSSCR", "SMTS", "SMAFRZE"], axis=1)
+    gtex_metadata.columns = ["sample_id", "tissue_detail", "RIN", "ischemic_time",
+                             "read_length", "sequencing_date", "bam_path", "tissue"]
+    gtex_metadata["sequencing_date"] = gtex_metadata["sequencing_date"].apply(
+        standardize_seq_date)
+    gtex_metadata["read_length"] = gtex_metadata["read_length"].astype(int)
+    gtex_metadata["stranded"] = ["no" for _ in range(gtex_metadata.shape[0])]
+    gtex_metadata["subject_id"] = gtex_metadata["sample_id"].apply(
+        get_subject_id_from_sample_id)
+
+    gtex_phenotype = pd.read_csv(GTEX_PHENOTYPE_PATH, sep="\t")
+    gtex_metadata = gtex_metadata.merge(gtex_phenotype,
+                                        how="inner",
+                                        left_on="subject_id",
+                                        right_on="SUBJID")
+    gtex_metadata = gtex_metadata[["sample_id", "tissue", "tissue_detail", "RIN",
+                                   "ischemic_time", "read_length", "sequencing_date",
+                                   "bam_path",
+                                   "stranded", "SEX"]]
+    gtex_metadata = gtex_metadata.rename(columns={"SEX": "sex"})
+    gtex_metadata["sex"] = gtex_metadata["sex"].apply(convert_sex_num_to_letter)
+    gtex_metadata["project"] = ["gtex_v8" for _ in range(gtex_metadata.shape[0])]
+    gtex_metadata["batch"] = ["GTEx_v8" for _ in range(gtex_metadata.shape[0])]
+
+    return gtex_metadata
+
+
+def standardize_seq_date(gtex_date):
+    date_list = gtex_date.split("/")
+    return f"{date_list[2]}-{date_list[0]}"
+
+
+def get_subject_id_from_sample_id(sample_id):
+    sample_id_ls = sample_id.split("-")
+    subject_id = f"{sample_id_ls[0]}-{sample_id_ls[1]}"
+    return subject_id
+
+
+def convert_sex_num_to_letter(sex):
+    if sex == 1:
+        return "M"
+    if sex == 2:
+        return "F"
+
+
+def get_gtex_bam_filename(sample_id):
+    return f"gs://fc-secure-ff8156a3-ddf3-42e4-9211-0fd89da62108/GTEx_Analysis_2017" \
+           f"-06-05_v8_RNAseq_BAM_files/{sample_id}.Aligned.sortedByCoord.out.patched.md.bam"
 
 
 # %%

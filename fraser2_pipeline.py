@@ -7,7 +7,7 @@ from fraser2_rscirpts import count_split_reads_single_sample_r, \
 from metadata_utils import read_from_airtable, \
     write_to_airtable, RNA_SEQ_BASE_ID, \
     DATA_PATHS_TABLE_ID, \
-    DATA_PATHS_VIEW_ID
+    DATA_PATHS_VIEW_ID, get_gtex_metadata
 
 REGION = ["us-central1"]
 # DEFAULT_BATCH_NAME = "all"
@@ -228,7 +228,8 @@ if __name__ == "__main__":
                         required=True)
     parser.add_argument("--job-name", type=str,
                         required=True)
-    parser.add_argument()
+    parser.add_argument("--with-gtex", action="store_true",
+                        help="Add the top 100 GTEx samples to RDG samples.")
     parser.add_argument("-s", "--sample-ids", type=str,
                         help="A text file containing IDs of samples with the "
                              "specified tissue type to be processed. "
@@ -249,6 +250,16 @@ if __name__ == "__main__":
     fraser_dir = f"{args.file_dir}/fraser2"
 
     to_use_ids, to_use_bam_paths = get_ids_and_bam_paths()
+
+    if args.with_gtex:
+        gtex_table = get_gtex_metadata()
+        gtex_for_tissue = gtex_table[gtex_table["tissue"] == args.tissue]
+
+        gtex_ids = np.array(gtex_for_tissue["sample_id"])
+        gtex_bam_paths = np.array(gtex_for_tissue["bam_path"])
+        to_use_ids = np.concatenate([to_use_ids, gtex_ids], axis=0)
+        to_use_bam_paths = np.concatenate([to_use_bam_paths, gtex_bam_paths], axis=0)
+
 
     psi_types = ["jaccard"]
     print("The number of samples used in this batch run is: ", len(to_use_ids))
