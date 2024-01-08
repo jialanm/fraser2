@@ -20,7 +20,7 @@ ANNOTATION_DELIMITER = "\t"  # delimiter of the annotation input file
 SAMPLE_ID_COL = "sample_id"
 BAM_PATH_COL = "star_bam"
 
-DOCKER_IMAGE = "gcr.io/cmg-analysis/fraser2@sha256:eccd4b569d1b0f44d5d5e58e176e724245572613b40c0e254eea658f14f8ed49"
+DOCKER_IMAGE = "gcr.io/cmg-analysis/fraser2@sha256:38e7e777a08886b5d4789b4c06f5433af60953542774134165281b7c39d35eeb"
 GENE_MODELS_GFF = "gs://tgg-rnaseq/ref/MANE.GRCh38.v1.0.ensembl_genomic.without_ensg_versions.gff.gz"
 
 
