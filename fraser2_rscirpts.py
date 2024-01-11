@@ -144,8 +144,8 @@ def run_fraser_r(psitype, num_of_cpu, result_table_filename, heatmap_before_ae,
     # res <- as.data.table(results(fds))
     print(res)
 
-    write.table(res_filtered, file="filtered_{result_table_filename}")
-    write.table(res, file="{result_table_filename}")
+    write.table(res_filtered, file="filtered_{result_table_filename}", quote=FALSE, row.names=FALSE)
+    write.table(res, file="{result_table_filename}", quote=FALSE, row.names=FALSE)
 
     # result visualization
     for(sample_id in sample_ids) {{

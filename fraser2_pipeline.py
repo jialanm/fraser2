@@ -40,8 +40,8 @@ def get_ids_and_bam_paths():
 #     localized_path = batch.read_input(path)
 #     job.command(f"ln -s {localized_path} {link_path}")
 
-def create_symbolic_links(batch, job, path, link_path):
-    if args.with_gtex:
+def create_symbolic_links(batch, job, path, link_path, is_gtex):
+    if is_gtex:
         job.command(
             f"gsutil -u {args.requester_pays_project} -m cp {path} {link_path}")
     else:
@@ -49,28 +49,29 @@ def create_symbolic_links(batch, job, path, link_path):
         job.command(f"ln -s {localized_path} {link_path}")
 
 
-def load_bam_and_index_file(batch, cur_job, sample_id, bam_path):
+def load_bam_and_index_file(batch, cur_job, sample_id, bam_path, is_gtex):
     bam_index_path = f"{bam_path}.bai"
     link_bam_path = f"{sample_id}.bam"
     link_bam_index_path = f"{sample_id}.bam.bai"
-    create_symbolic_links(batch, cur_job, bam_path, link_bam_path)
-    create_symbolic_links(batch, cur_job, bam_index_path, link_bam_index_path)
+    create_symbolic_links(batch, cur_job, bam_path, link_bam_path, is_gtex)
+    create_symbolic_links(batch, cur_job, bam_index_path, link_bam_index_path, is_gtex)
 
 
 def count_and_cache_split_reads(batch, sample_id, bam_path):
     # count and cache split reads for one sample
     cur_count_job = batch.new_job(f"count_{sample_id}")
-    # switch email account for GTEx samples
-    if args.with_gtex and "GTEX" in sample_id:
-        switch_to_gmail_account(cur_count_job)
-
     bam_size = hfs.ls(bam_path)[0].size
     # print(bam_size)
     cur_count_job.storage(bam_size + 1e11)  # set the job storage to be the file size
     cur_count_job.command("cd /io")  # enter the dir where storage is mounted
 
-    # create local bam file paths for R
-    load_bam_and_index_file(batch, cur_count_job, sample_id, bam_path)
+    # switch email account for GTEx samples
+    if args.with_gtex and "GTEX" in sample_id:
+        switch_to_gmail_account(cur_count_job)
+        # create local bam file paths for R
+        load_bam_and_index_file(batch, cur_count_job, sample_id, bam_path, True)
+    else:
+        load_bam_and_index_file(batch, cur_count_job, sample_id, bam_path, False)
 
     # count split reads
     cur_count_job.command(f"""xvfb-run Rscript -e '
@@ -110,7 +111,7 @@ def copy_split_read_counts_files(batch, job, sample_ids):
     for cur_id in sample_ids:
         path = f"{fraser_dir}/count_split_reads_{cur_id}.tar.gz"  # cloud path
         link_path = f"count_split_reads_{cur_id}.tar.gz"  # soft link path
-        create_symbolic_links(batch, job, path, link_path)
+        create_symbolic_links(batch, job, path, link_path, False)
 
 
 def get_split_reads(batch, sample_ids, bam_paths):
@@ -137,12 +138,13 @@ def get_all_reads(batch, cur_job, sample_ids, bam_paths):
     if hfs.is_file(saved_fds_path):  # if the fds exists
         return None
 
-    if args.with_gtex:
-        switch_to_gmail_account(cur_job)
-
     # cur_job = batch.new_job(f"get_all_reads_{type}")
     cur_job.storage(f"{15 * to_use_ids.shape[0] + 100}G")
-    load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths)
+    if args.with_gtex:
+        switch_to_gmail_account(cur_job)
+        load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths, True)
+    else:
+        load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths, False)
     env_var_id, env_var_path = get_env_vars(sample_ids)
 
     print(env_var_id)
@@ -160,7 +162,7 @@ def get_all_reads(batch, cur_job, sample_ids, bam_paths):
     return cur_job
 
 
-def load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths):
+def load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths, is_gtex):
     cur_job.command("cd /io")
 
     # copy all split read counts files to the current directory
@@ -174,7 +176,10 @@ def load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths):
     for i in range(len(sample_ids)):
         cur_id = sample_ids[i]
         cur_bam_path = bam_paths[i]
-        load_bam_and_index_file(batch, cur_job, cur_id, cur_bam_path)
+        if is_gtex and "GTEX" in cur_id:
+            load_bam_and_index_file(batch, cur_job, cur_id, cur_bam_path, True)
+        else:
+            load_bam_and_index_file(batch, cur_job, cur_id, cur_bam_path, False)
 
 
 def get_env_vars(sample_ids):
@@ -190,12 +195,12 @@ def run_fraser(batch, cur_job, sample_ids, bam_paths, cur_type):
 
     # localize saved fds to the container
     saved_fds_path = f"{fraser_dir}/{args.job_name}_savedObjects"
-    create_symbolic_links(batch, cur_job, saved_fds_path, "savedObjects")
+    create_symbolic_links(batch, cur_job, saved_fds_path, "savedObjects", False)
     cur_job.command("ls -lh")
     cur_job.command(f"tar xzf savedObjects")
 
     gene_models_gff_path = "MANE.GRCh38.v1.0.ensembl_genomic.without_ensg_versions.gff.gz"  # link path
-    create_symbolic_links(batch, cur_job, GENE_MODELS_GFF, gene_models_gff_path)
+    create_symbolic_links(batch, cur_job, GENE_MODELS_GFF, gene_models_gff_path, False)
 
     # run fraser2
     env_var_id, env_var_path = get_env_vars(sample_ids)
