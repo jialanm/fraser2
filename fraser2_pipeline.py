@@ -146,11 +146,11 @@ def load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths, is_gte
     cur_job.command("cd /io")
 
     # copy all split read counts files to the current directory
-    # copy_split_read_counts_files(batch, cur_job, sample_ids)
-    # cur_job.command("ls -lh")
-    # # decompress .tar.gz files and rebuild the cache folder
-    # cur_job.command("for i in count_split_reads*.tar.gz; do tar xzf $i; done")
-    # cur_job.command("ls -lh cache")
+    copy_split_read_counts_files(batch, cur_job, sample_ids)
+    cur_job.command("ls -lh")
+    # decompress .tar.gz files and rebuild the cache folder
+    cur_job.command("for i in count_split_reads*.tar.gz; do tar xzf $i; done")
+    cur_job.command("ls -lh cache")
 
     # load bam and bam index file to the current directory
     for i in range(len(sample_ids)):
