@@ -1,17 +1,18 @@
+import os
+
 import hailtop.batch as hb
 import argparse
 import numpy as np
+from datetime import date
 import hailtop.fs as hfs
-from fraser2_rscirpts import count_split_reads_single_sample_r, \
+from fraser2_rscripts import count_split_reads_single_sample_r, \
     count_reads_all_samples_r, run_fraser_r
 from metadata_utils import read_from_airtable, \
-    write_to_airtable, RNA_SEQ_BASE_ID, \
+    RNA_SEQ_BASE_ID, \
     DATA_PATHS_TABLE_ID, \
     DATA_PATHS_VIEW_ID, get_gtex_metadata, switch_to_gmail_account
 
 REGION = ["us-central1"]
-# DEFAULT_BATCH_NAME = "all"
-# SAVE_PREFIX = "with_volcano"
 DEFAULT_CPU = 2 ** 4
 DEFAULT_MEMORY = "highmem"
 PER_BAM_SIZE = 50
@@ -21,8 +22,7 @@ SAMPLE_ID_COL = "sample_id"
 BAM_PATH_COL = "star_bam"
 
 DOCKER_IMAGE = "gcr.io/cmg-analysis/fraser2@sha256:38e7e777a08886b5d4789b4c06f5433af60953542774134165281b7c39d35eeb"
-GENE_MODELS_GFF = "gs://tgg-rnaseq/ref/MANE.GRCh38.v1.0.ensembl_genomic.without_ensg_versions.gff.gz"
-
+GENE_MODELS_GFF = "gs://tgg-rnaseq/ref/gencode.v39.annotation.without_version_numbers.gff3.gz"
 
 def get_ids_and_bam_paths():
     data_paths_table = read_from_airtable(RNA_SEQ_BASE_ID,
@@ -35,10 +35,6 @@ def get_ids_and_bam_paths():
     bam_paths = np.array(tissue_table["star_bam"])
     return sample_ids, bam_paths
 
-
-# def create_symbolic_links(batch, job, path, link_path):
-#     localized_path = batch.read_input(path)
-#     job.command(f"ln -s {localized_path} {link_path}")
 
 def create_symbolic_links(batch, job, path, link_path, is_gtex):
     if is_gtex:
@@ -62,12 +58,12 @@ def count_and_cache_split_reads(batch, sample_id, bam_path):
     cur_count_job = batch.new_job(f"count_{sample_id}")
     bam_size = hfs.ls(bam_path)[0].size
     # print(bam_size)
-    cur_count_job.storage(bam_size + 1e11)  # set the job storage to be the file size
+    cur_count_job.storage(bam_size + 2e10)  # set the job storage to be the file size
     cur_count_job.command("cd /io")  # enter the dir where storage is mounted
 
     # switch email account for GTEx samples
     if args.with_gtex and "GTEX" in sample_id:
-        switch_to_gmail_account(cur_count_job)
+        switch_to_gmail_account(batch, cur_count_job)
         # create local bam file paths for R
         load_bam_and_index_file(batch, cur_count_job, sample_id, bam_path, True)
     else:
@@ -88,28 +84,13 @@ def count_and_cache_split_reads(batch, sample_id, bam_path):
 
     return cur_count_job
 
-
-def read_from_cloud(path):
-    dat = []
-    with hfs.open(path) as f:
-        for line in f:
-            dat.append(line.strip())
-    return dat
-
-
-def save_iter_to_cloud(job, iterable_obj):
-    for item in iterable_obj:
-        job.command(f"echo {item} >> {job.ofile}")
-
-
-def save_file_to_cloud(batch, cur_job, file, id):
-    cur_job.command(f"cp {file} {cur_job.ofile}")
-    batch.write_output(cur_job.ofile, f"{fraser_dir}/{id}_{file}")
-
+def get_split_reads_path(cur_id):
+    return f"{fraser_dir}/split_reads/count_split_reads_{cur_id}.tar.gz"
 
 def copy_split_read_counts_files(batch, job, sample_ids):
     for cur_id in sample_ids:
-        path = f"{fraser_dir}/count_split_reads_{cur_id}.tar.gz"  # cloud path
+        path = get_split_reads_path(cur_id)  # cloud
+        # path
         link_path = f"count_split_reads_{cur_id}.tar.gz"  # soft link path
         create_symbolic_links(batch, job, path, link_path, False)
 
@@ -122,7 +103,7 @@ def get_split_reads(batch, sample_ids, bam_paths):
     for i in range(len(sample_ids)):
         cur_id = sample_ids[i]
         cur_bam_path = bam_paths[i]
-        cur_saved_bam_path = f"{fraser_dir}/count_split_reads_{cur_id}.tar.gz"
+        cur_saved_bam_path = get_split_reads_path(cur_id)
         # if sample_id_cached_set is None or cur_id not in sample_id_cached_set or not hfs.is_file(cur_saved_bam_path):  # count split read counts for new samples
         if not hfs.is_file(cur_saved_bam_path):
             print(cur_id)
@@ -134,14 +115,13 @@ def get_split_reads(batch, sample_ids, bam_paths):
 
 
 def get_all_reads(batch, cur_job, sample_ids, bam_paths):
-    saved_fds_path = f"{fraser_dir}/{args.job_name}_savedObjects"
     if hfs.is_file(saved_fds_path):  # if the fds exists
         return None
 
     # cur_job = batch.new_job(f"get_all_reads_{type}")
     cur_job.storage(f"{15 * to_use_ids.shape[0] + 100}G")
     if args.with_gtex:
-        switch_to_gmail_account(cur_job)
+        switch_to_gmail_account(batch, cur_job)
         load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths, True)
     else:
         load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths, False)
@@ -166,11 +146,11 @@ def load_split_reads_and_bam_files(batch, cur_job, sample_ids, bam_paths, is_gte
     cur_job.command("cd /io")
 
     # copy all split read counts files to the current directory
-    copy_split_read_counts_files(batch, cur_job, sample_ids)
-    cur_job.command("ls -lh")
-    # decompress .tar.gz files and rebuild the cache folder
-    cur_job.command("for i in count_split_reads*.tar.gz; do tar xzf $i; done")
-    cur_job.command("ls -lh cache")
+    # copy_split_read_counts_files(batch, cur_job, sample_ids)
+    # cur_job.command("ls -lh")
+    # # decompress .tar.gz files and rebuild the cache folder
+    # cur_job.command("for i in count_split_reads*.tar.gz; do tar xzf $i; done")
+    # cur_job.command("ls -lh cache")
 
     # load bam and bam index file to the current directory
     for i in range(len(sample_ids)):
@@ -191,35 +171,31 @@ def get_env_vars(sample_ids):
 
 def run_fraser(batch, cur_job, sample_ids, bam_paths, cur_type):
     if args.with_gtex:
-        switch_to_gmail_account(cur_job)
+        switch_to_gmail_account(batch, cur_job)
 
     # localize saved fds to the container
-    saved_fds_path = f"{fraser_dir}/{args.job_name}_savedObjects"
-    create_symbolic_links(batch, cur_job, saved_fds_path, "savedObjects", False)
+    create_symbolic_links(batch, cur_job, saved_fds_path, "savedObjects.tar.gz", False)
     cur_job.command("ls -lh")
-    cur_job.command(f"tar xzf savedObjects")
+    cur_job.command(f"tar xzf savedObjects.tar.gz")
 
-    gene_models_gff_path = "MANE.GRCh38.v1.0.ensembl_genomic.without_ensg_versions.gff.gz"  # link path
+    gene_models_gff_path = os.path.basename(GENE_MODELS_GFF)  # link path
     create_symbolic_links(batch, cur_job, GENE_MODELS_GFF, gene_models_gff_path, False)
 
     # run fraser2
     env_var_id, env_var_path = get_env_vars(sample_ids)
-    result_table = f"{cur_type}_results.txt"
-    heatmap_before_ae = f"{cur_type}_before_ae_heatmap.png"
-    heatmap_after_ae = f"{cur_type}_after_ae_heatmap.png"
-    enc_dim_auc = f"{cur_type}_enc_dim_auc.png"
-    enc_dim_loss = f"{cur_type}_enc_dim_loss.png"
-    aberrant = f"{cur_type}_aberrant.png"
+    prefix = f"{args.tissue}_{cur_type}"
+    result_table = f"{prefix}_results.csv"
+    heatmap_before_ae = f"{prefix}_before_ae_heatmap.png"
+    heatmap_after_ae = f"{prefix}_after_ae_heatmap.png"
+    enc_dim_auc = f"{prefix}_enc_dim_auc.png"
+    enc_dim_loss = f"{prefix}_enc_dim_loss.png"
+    aberrant = f"{prefix}_aberrant.png"
 
-    delta_psi_threshold = 0.1
-    padj_threshold = 0.3
-    min_reads = 2
-
-    zip_dat = f"{args.job_name}_{cur_type}_zip_dat.tar.gz"
+    zip_dat = f"{prefix}_zip_dat.tar.gz"
 
     cur_job.command(f"""xvfb-run Rscript -e '
     {run_fraser_r(cur_type, DEFAULT_CPU, result_table, heatmap_before_ae, heatmap_after_ae, enc_dim_auc, enc_dim_loss,
-                  aberrant, delta_psi_threshold, padj_threshold, min_reads, gene_models_gff_path)}
+                  delta_psi_threshold, padj_threshold, min_reads, gene_models_gff_path)}
     ' {env_var_id} {env_var_path}
     """)
     cur_job.command("ls -lh .")
@@ -228,10 +204,10 @@ def run_fraser(batch, cur_job, sample_ids, bam_paths, cur_type):
     # cur_job.command(
     #     f"tar czf {zip_dat}.tar.gz {result_table} {heatmap_before_ae} {heatmap_after_ae} "
     #     f"{enc_dim_auc} {enc_dim_loss}")
-    cur_job.command(f"tar czf {zip_dat}.tar.gz {result_table} filtered_{result_table} "
-                    f"volcano_*")
-    cur_job.command(f"cp {zip_dat}.tar.gz {cur_job.ofile}")
-    batch.write_output(cur_job.ofile, f"{fraser_dir}/{zip_dat}")
+    cur_job.command(f"tar czf {zip_dat} {result_table} filtered_{result_table}"
+                    f" {heatmap_before_ae} {heatmap_after_ae} volcano_*")
+    cur_job.command(f"cp {zip_dat} {cur_job.ofile}")
+    batch.write_output(cur_job.ofile, f"{fraser_dir}/{today_formatted}/{zip_dat}")
 
 
 if __name__ == "__main__":
@@ -249,8 +225,6 @@ if __name__ == "__main__":
                              "one of [\"muscle\", \"fibroblasts\", \"lymphocytes\","
                              "\"whole_blood\"].",
                         required=True)
-    parser.add_argument("--job-name", type=str,
-                        required=True)
     parser.add_argument("--with-gtex", action="store_true",
                         help="Add the top 100 GTEx samples to RDG samples.")
     parser.add_argument("-s", "--sample-ids", type=str,
@@ -264,7 +238,7 @@ if __name__ == "__main__":
                                 remote_tmpdir=args.file_dir,
                                 regions=REGION)
 
-    batch = hb.Batch(backend=backend, name=args.job_name,
+    batch = hb.Batch(backend=backend, name=f"{args.tissue}_fraser2",
                      requester_pays_project=args.requester_pays_project,
                      default_image=DOCKER_IMAGE,
                      default_cpu=DEFAULT_CPU,
@@ -272,6 +246,10 @@ if __name__ == "__main__":
                      default_storage=DEFAULT_STORAGE)
     fraser_dir = f"{args.file_dir}/fraser2"
 
+    today = date.today()
+    today_formatted = f"{today.month}_{today.year}"
+    saved_fds_path = f"{fraser_dir}/{today_formatted}/" \
+                     f"{args.tissue}_savedObjects.tar.gz"
     to_use_ids, to_use_bam_paths = get_ids_and_bam_paths()
 
     if args.with_gtex:
@@ -284,6 +262,9 @@ if __name__ == "__main__":
         to_use_bam_paths = np.concatenate([to_use_bam_paths, gtex_bam_paths], axis=0)
 
     psi_types = ["jaccard"]
+    delta_psi_threshold = 0.1
+    padj_threshold = 0.3
+    min_reads = 2
     print("The number of samples used in this batch run is: ", len(to_use_ids))
 
     count_jobs = get_split_reads(batch, to_use_ids, to_use_bam_paths)
@@ -297,6 +278,7 @@ if __name__ == "__main__":
         fraser_job = batch.new_job(f"fraser2_{cur_type}")
         fraser_job.depends_on(all_reads_job)
         fraser_job.storage(f"100G")
+
         run_fraser(batch, fraser_job, to_use_ids, to_use_bam_paths, cur_type)
 
     batch.run()

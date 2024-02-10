@@ -66,7 +66,7 @@ def count_reads_all_samples_r(num_of_cpu):
 
 def run_fraser_r(psitype, num_of_cpu, result_table_filename, heatmap_before_ae,
                  heatmap_after_ae, enc_dim_auc,
-                 enc_dim_loss, aberrant, delta_psi_threshold, padj_threshold, min_reads,
+                 enc_dim_loss, delta_psi_threshold, padj_threshold, min_reads,
                  gene_models_gff_path):
     return f"""
     library(data.table)
@@ -75,8 +75,6 @@ def run_fraser_r(psitype, num_of_cpu, result_table_filename, heatmap_before_ae,
     library(BiocParallel)
     library(GenomicFeatures)
     library(org.Hs.eg.db)
-
-# library(TxDb.Hsapiens.UCSC.hg38.knownGene)
 
     args <- commandArgs(trailingOnly = TRUE)
     sample_ids <- unlist(strsplit(args[1], split=":"))
@@ -89,7 +87,6 @@ def run_fraser_r(psitype, num_of_cpu, result_table_filename, heatmap_before_ae,
 
 
     fds = loadFraserDataSet(".")
-    num_of_iter = 15
 
     print(fds)
 
@@ -97,22 +94,20 @@ def run_fraser_r(psitype, num_of_cpu, result_table_filename, heatmap_before_ae,
     fitMetrics(fds) <- "{psitype}"  # not available in FRASER1
 
     # plot color heatmap for samples before autoencoder correction for sample covariance
-    # before_ae <- plotCountCorHeatmap(fds, type="{psitype}", logit=TRUE, plotType="sampleCorrelation")
-    # ggsave(filename = "{heatmap_before_ae}", plot = before_ae, device = "png")
+    before_ae <- plotCountCorHeatmap(fds, type="{psitype}", logit=TRUE, plotType="sampleCorrelation")
+    ggsave(filename = "{heatmap_before_ae}", plot = before_ae, device = "png")
 
     # filter junctions with low expressions
     fds <- filterExpressionAndVariability(fds,  minExpressionInOneSample={min_reads}, minDeltaPsi={delta_psi_threshold}, filter=TRUE, BPPARAM=bpparam())
 
-    # annotate with genes
+    # annotate with GENCODE gene IDs
     txdb_obj <- makeTxDbFromGFF("./{gene_models_gff_path}")
     fds <- annotateRangesWithTxDb(fds, txdb=txdb_obj, feature="ENSEMBL", keytype="ENSEMBL")
-    # fds <- annotateRangesWithTxDb(fds, txdb=txdb_obj, keytype="ENSEMBL")
     print(fds)
 
     # get the optimal dimension of the latent space
     fds <- optimHyperParams(fds, type="{psitype}", implementation="{IMPLEMENTATION}", BPPARAM=bpparam())
     best_q = bestQ(fds, type="{psitype}")
-    # best_q = 9
     print("Best Q is: ")
     print(best_q)
 
@@ -126,26 +121,22 @@ def run_fraser_r(psitype, num_of_cpu, result_table_filename, heatmap_before_ae,
     print("Run FRASER pipeline... ")
     print(fds)
 
-    fds <- FRASER(fds, q=best_q, type="{psitype}", implementation="{IMPLEMENTATION}", iterations=num_of_iter, BPPARAM=bpparam())
+    fds <- FRASER(fds, q=best_q, type="{psitype}", implementation="{IMPLEMENTATION}", BPPARAM=bpparam())
     fds <- calculateZscore(fds, type="{psitype}")
     print(fds)
 
     # plot heatmap after confounder correction
-    # after_ae <- plotCountCorHeatmap(fds, type="{psitype}", logit=TRUE, normalized=TRUE, plotType="sampleCorrelation")
-    # ggsave(filename = "{heatmap_after_ae}", plot = after_ae, device = "png")
-
-    # aberrant <- plotAberrantPerSample(fds, type="{psitype}", sample_id, deltaPsiCutoff={delta_psi_threshold}, padjCutoff={padj_threshold})
-    # ggsave(filename = "{aberrant}", plot = aberrant, device = "png")
+    after_ae <- plotCountCorHeatmap(fds, type="{psitype}", logit=TRUE, normalized=TRUE, plotType="sampleCorrelation")
+    ggsave(filename = "{heatmap_after_ae}", plot = after_ae, device = "png")
 
     res_filtered <- as.data.table(results(fds, padjCutoff={padj_threshold}, 
     deltaPsiCutoff={delta_psi_threshold}))
     res <- as.data.table(results(fds, padjCutoff=1, deltaPsiCutoff=0))
-    # res <- as.data.table(results(fds, padjCutoff={padj_threshold}, deltaPsiCutoff=0))
-    # res <- as.data.table(results(fds))
     print(res)
 
-    write.table(res_filtered, file="filtered_{result_table_filename}", quote=FALSE, row.names=FALSE)
-    write.table(res, file="{result_table_filename}", quote=FALSE, row.names=FALSE)
+    write.table(res_filtered, file="filtered_{result_table_filename}",quote=FALSE, 
+    row.names=FALSE, sep = ",")
+    write.table(res, file="{result_table_filename}", quote=FALSE, row.names=FALSE, sep = ",")
 
     # result visualization
     for(sample_id in sample_ids) {{

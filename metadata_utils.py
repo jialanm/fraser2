@@ -70,14 +70,16 @@ SERVICE_ACCOUNT_CREDENTIALS_JSON_PATH = os.path.expanduser(
 AIRTABLE_TOKEN = str(config["airtable-token"])
 
 
-def switch_to_gmail_account(batch_job):
-    switch_gcloud_auth_to_user_account(batch_job,
+def switch_to_gmail_account(batch, batch_job):
+    switch_gcloud_auth_to_user_account(batch,
+                                       batch_job,
                                        gcloud_credentials_path=GCLOUD_CREDENTIALS,
                                        gcloud_user_account=GCLOUD_USR_ACCOUNT,
                                        gcloud_project=GCLOUD_PROJECT)
 
 
-def switch_gcloud_auth_to_user_account(batch_job,
+def switch_gcloud_auth_to_user_account(batch,
+                                       batch_job,
                                        gcloud_credentials_path,
                                        gcloud_user_account,
                                        gcloud_project):
@@ -91,8 +93,10 @@ def switch_gcloud_auth_to_user_account(batch_job,
         raise ValueError("gcloud_project not specified.")
 
     gcloud_auth_activate_service_account(batch_job)
-    batch_job.command(
-        f"gsutil -m cp -r {os.path.join(gcloud_credentials_path, '.config')} /tmp/")
+    local_path = batch.read_input(os.path.join(gcloud_credentials_path, '.config'))
+    batch_job.command(f"ln -s {local_path} /tmp/")
+    # batch_job.command(
+    #     f"gsutil -m cp -r {os.path.join(gcloud_credentials_path, '.config')} /tmp/")
     batch_job.command(f"rm -rf ~/.config")
     batch_job.command(f"mv /tmp/.config ~/")
     batch_job.command(f"gcloud config set account {gcloud_user_account}")
