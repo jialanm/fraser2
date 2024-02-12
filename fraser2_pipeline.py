@@ -207,7 +207,7 @@ def run_fraser(batch, cur_job, sample_ids, bam_paths, cur_type):
     cur_job.command(f"tar czf {zip_dat} {result_table} filtered_{result_table}"
                     f" {heatmap_before_ae} {heatmap_after_ae} volcano_*")
     cur_job.command(f"cp {zip_dat} {cur_job.ofile}")
-    batch.write_output(cur_job.ofile, f"{fraser_dir}/{today_formatted}/{zip_dat}")
+    batch.write_output(cur_job.ofile, f"{fraser_dir}/{today_formatted}/test_{zip_dat}")
 
 
 if __name__ == "__main__":
@@ -247,10 +247,13 @@ if __name__ == "__main__":
     fraser_dir = f"{args.file_dir}/fraser2"
 
     today = date.today()
-    today_formatted = f"{today.month}_{today.year}"
+    today_formatted = f"{today.month+1}_{today.year}"
     saved_fds_path = f"{fraser_dir}/{today_formatted}/" \
                      f"{args.tissue}_savedObjects.tar.gz"
     to_use_ids, to_use_bam_paths = get_ids_and_bam_paths()
+    to_use_ids = to_use_ids[:-1]
+    to_use_bam_paths = to_use_bam_paths[:-1]
+    print(to_use_ids)
 
     if args.with_gtex:
         gtex_table = get_gtex_metadata()
@@ -277,7 +280,7 @@ if __name__ == "__main__":
     for cur_type in psi_types:
         fraser_job = batch.new_job(f"fraser2_{cur_type}")
         fraser_job.depends_on(all_reads_job)
-        fraser_job.storage(f"100G")
+        fraser_job.storage(f"30G")
 
         run_fraser(batch, fraser_job, to_use_ids, to_use_bam_paths, cur_type)
 

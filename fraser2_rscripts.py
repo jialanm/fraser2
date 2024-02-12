@@ -87,7 +87,6 @@ def run_fraser_r(psitype, num_of_cpu, result_table_filename, heatmap_before_ae,
 
 
     fds = loadFraserDataSet(".")
-
     print(fds)
 
     # change splice metrics
@@ -99,11 +98,6 @@ def run_fraser_r(psitype, num_of_cpu, result_table_filename, heatmap_before_ae,
 
     # filter junctions with low expressions
     fds <- filterExpressionAndVariability(fds,  minExpressionInOneSample={min_reads}, minDeltaPsi={delta_psi_threshold}, filter=TRUE, BPPARAM=bpparam())
-
-    # annotate with GENCODE gene IDs
-    txdb_obj <- makeTxDbFromGFF("./{gene_models_gff_path}")
-    fds <- annotateRangesWithTxDb(fds, txdb=txdb_obj, feature="ENSEMBL", keytype="ENSEMBL")
-    print(fds)
 
     # get the optimal dimension of the latent space
     fds <- optimHyperParams(fds, type="{psitype}", implementation="{IMPLEMENTATION}", BPPARAM=bpparam())
@@ -128,6 +122,11 @@ def run_fraser_r(psitype, num_of_cpu, result_table_filename, heatmap_before_ae,
     # plot heatmap after confounder correction
     after_ae <- plotCountCorHeatmap(fds, type="{psitype}", logit=TRUE, normalized=TRUE, plotType="sampleCorrelation")
     ggsave(filename = "{heatmap_after_ae}", plot = after_ae, device = "png")
+    
+    # annotate with GENCODE gene IDs
+    txdb_obj <- makeTxDbFromGFF("./{gene_models_gff_path}")
+    fds <- annotateRangesWithTxDb(fds, txdb=txdb_obj, feature="ENSEMBL", keytype="ENSEMBL")
+    print(fds)
 
     res_filtered <- as.data.table(results(fds, padjCutoff={padj_threshold}, 
     deltaPsiCutoff={delta_psi_threshold}))
