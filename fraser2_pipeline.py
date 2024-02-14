@@ -247,12 +247,10 @@ if __name__ == "__main__":
     fraser_dir = f"{args.file_dir}/fraser2"
 
     today = date.today()
-    today_formatted = f"{today.month+1}_{today.year}"
+    today_formatted = f"{today.month}_{today.year}"
     saved_fds_path = f"{fraser_dir}/{today_formatted}/" \
                      f"{args.tissue}_savedObjects.tar.gz"
     to_use_ids, to_use_bam_paths = get_ids_and_bam_paths()
-    to_use_ids = to_use_ids[:-1]
-    to_use_bam_paths = to_use_bam_paths[:-1]
     print(to_use_ids)
 
     if args.with_gtex:
