@@ -212,14 +212,11 @@ def run_fraser(batch, cur_job, sample_ids, bam_paths, cur_type):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--billing-project", type=str, help="Project to bill under.",
-                        default="tgg-rare-disease")
+    parser.add_argument("--billing-project", type=str, help="Project to bill under.")
     parser.add_argument("--requester-pays-project", type=str,
-                        help="Requester pays project to bill under.",
-                        default="cmg-analysis")
+                        help="Requester pays project to bill under.")
     parser.add_argument("--file-dir", type=str,
-                        help="The directory to store results table.",
-                        default="gs://jialan-storage")
+                        help="The directory to store results table.")
     parser.add_argument("--tissue", type=str,
                         help="Tissue type of the samples to be processed. Should be "
                              "one of [\"muscle\", \"fibroblasts\", \"lymphocytes\","
